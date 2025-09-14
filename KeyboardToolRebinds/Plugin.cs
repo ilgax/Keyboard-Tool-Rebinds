@@ -1,4 +1,3 @@
-
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -18,8 +17,9 @@ namespace KeyboardToolRebinds
         private void Awake()
         {
             Log = Logger;
-            ToolUpKey = Config.Bind("Keybinds", "ToolUp", KeyCode.UpArrow);
-            ToolDownKey = Config.Bind("Keybinds", "ToolDown", KeyCode.DownArrow);
+            ToolUpKey = Config.Bind("Keybinds", "ToolUp", KeyCode.Z, "The key to replace the 'Up' action for tools.");
+            ToolDownKey = Config.Bind("Keybinds", "ToolDown", KeyCode.X, "The key to replace the 'Down' action for tools.");
+
             new Harmony("com.ilgax.keyboardtoolrebinds").PatchAll(Assembly.GetExecutingAssembly());
         }
     }
