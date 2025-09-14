@@ -28,6 +28,70 @@ namespace KeyboardToolRebinds
             }
         }
 
+        // Block the original GetWillThrowTool method only for directional inputs
+        [HarmonyPatch("GetWillThrowTool")]
+        [HarmonyPrefix]
+        private static bool GetWillThrowTool_Prefix(HeroController __instance, ref bool __result)
+        {
+            // Only block if the setting is enabled
+            if (Plugin.BlockOriginalInput.Value)
+            {
+                try
+                {
+                    // Get the inputHandler field
+                    var inputHandlerField = typeof(HeroController).GetField("inputHandler", 
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+
+                    if (inputHandlerField != null)
+                    {
+                        var inputHandler = inputHandlerField.GetValue(__instance);
+
+                        // Try property first, then field
+                        System.Reflection.MemberInfo inputActionsMember = inputHandler.GetType().GetProperty("inputActions");
+                        if (inputActionsMember == null)
+                        {
+                            inputActionsMember = inputHandler.GetType().GetField("inputActions");
+                        }
+
+                        if (inputActionsMember != null)
+                        {
+                            object inputActions = null;
+
+                            if (inputActionsMember is System.Reflection.PropertyInfo prop)
+                            {
+                                inputActions = prop.GetValue(inputHandler);
+                            }
+                            else if (inputActionsMember is System.Reflection.FieldInfo field)
+                            {
+                                inputActions = field.GetValue(inputHandler);
+                            }
+
+                            if (inputActions is HeroActions heroActions)
+                            {
+                                // Check if Up or Down is pressed
+                                bool upPressed = heroActions.Up.IsPressed;
+                                bool downPressed = heroActions.Down.IsPressed;
+
+                                // Only block if directional input is being used
+                                if (upPressed || downPressed)
+                                {
+                                    __result = false;
+                                    return false; // Block directional tool input
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (System.Exception)
+                {
+                    // If reflection fails, don't block anything
+                }
+            }
+
+            // Allow original method to run (for neutral cast or if blocking is disabled)
+            return true;
+        }
+
         private static void TryUseToolDirectly(HeroController heroController, AttackToolBinding binding)
         {
             try
