@@ -17,6 +17,7 @@ namespace KeyboardToolRebinds
         private void Awake()
         {
             Log = Logger;
+            Log.LogInfo("Plugin Awake method called");
             ToolUpKey = Config.Bind("Keybinds", "ToolUp", KeyCode.Z, "The key to replace the 'Up' action for tools.");
             ToolDownKey = Config.Bind("Keybinds", "ToolDown", KeyCode.X, "The key to replace the 'Down' action for tools.");
 

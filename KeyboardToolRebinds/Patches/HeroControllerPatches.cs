@@ -1,50 +1,85 @@
 using HarmonyLib;
-using InControl;
-using System.Collections.Generic;
-using System.Reflection.Emit;
 using UnityEngine;
+using System.Reflection;
 
-namespace KeyboardToolRebinds.Patches
+namespace KeyboardToolRebinds
 {
+    // Patch HeroController to directly handle our custom keys
     [HarmonyPatch(typeof(HeroController))]
-    public class HeroController_Patches
+    public class HeroController_DirectPatches
     {
-        [HarmonyPatch("GetWillThrowTool")]
-        [HarmonyTranspiler]
-        private static IEnumerable<CodeInstruction> GetWillThrowTool_Transpiler(IEnumerable<CodeInstruction> instructions)
+        private static FieldInfo willThrowToolField;
+        private static MethodInfo canThrowToolMethod;
+        private static MethodInfo throwToolMethod;
+
+        [HarmonyPatch("LookForInput")]
+        [HarmonyPostfix]
+        private static void LookForInput_Postfix(HeroController __instance)
         {
-            var isPressedMethod = AccessTools.PropertyGetter(typeof(OneAxisInputControl), "IsPressed");
-            var matcher = new CodeMatcher(instructions);
+            // Check for our custom keys
+            if (Input.GetKeyDown(Plugin.ToolUpKey.Value))
+            {
+                TryUseToolDirectly(__instance, AttackToolBinding.Up);
+            }
 
-            // Find the first call to IsPressed (which should be for the 'Up' action) and insert our delegate.
-            matcher.MatchForward(false, new CodeMatch(OpCodes.Callvirt, isPressedMethod))
-                .Advance(1)
-                .Insert(new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(HeroController_Patches), nameof(GetUpPressed))));
-
-            // Find the second call to IsPressed (which should be for the 'Down' action) and insert our delegate.
-            matcher.MatchForward(false, new CodeMatch(OpCodes.Callvirt, isPressedMethod))
-                .Advance(1)
-                .Insert(new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(HeroController_Patches), nameof(GetDownPressed))));
-
-            return matcher.InstructionEnumeration();
+            if (Input.GetKeyDown(Plugin.ToolDownKey.Value))
+            {
+                TryUseToolDirectly(__instance, AttackToolBinding.Down);
+            }
         }
 
-        public static bool GetUpPressed(bool oldValue)
+        private static void TryUseToolDirectly(HeroController heroController, AttackToolBinding binding)
         {
-            if (ManagerSingleton<InputHandler>.Instance.inputActions.LastDeviceClass == InputDeviceClass.Keyboard)
+            try
             {
-                return Input.GetKey(Plugin.ToolUpKey.Value);
-            }
-            return oldValue;
-        }
+                // Get the tool for this binding
+                AttackToolBinding usedBinding;
+                var tool = ToolItemManager.GetBoundAttackTool(binding, ToolEquippedReadSource.Active, out usedBinding);
 
-        public static bool GetDownPressed(bool oldValue)
-        {
-            if (ManagerSingleton<InputHandler>.Instance.inputActions.LastDeviceClass == InputDeviceClass.Keyboard)
-            {
-                return Input.GetKey(Plugin.ToolDownKey.Value);
+                if (tool == null) return; // No tool available
+
+                // Set willThrowTool field using reflection
+                if (willThrowToolField == null)
+                {
+                    willThrowToolField = typeof(HeroController).GetField("willThrowTool", 
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+
+                if (willThrowToolField == null) return; // Field not found
+
+                willThrowToolField.SetValue(heroController, tool);
+
+                // Get private method references
+                if (canThrowToolMethod == null)
+                {
+                    canThrowToolMethod = typeof(HeroController).GetMethod("CanThrowTool", 
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+
+                if (throwToolMethod == null)
+                {
+                    throwToolMethod = typeof(HeroController).GetMethod("ThrowTool", 
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+
+                if (canThrowToolMethod == null || throwToolMethod == null) return; // Methods not found
+
+                // Check if we can throw this tool and do it
+                bool canThrow = (bool)canThrowToolMethod.Invoke(heroController, new object[] { tool, usedBinding, true });
+
+                if (canThrow)
+                {
+                    throwToolMethod.Invoke(heroController, new object[] { false }); // Use the tool
+                }
             }
-            return oldValue;
+            catch (System.Exception ex)
+            {
+                // Only log actual errors
+                Plugin.Log.LogError($"Error using tool: {ex.Message}");
+            }
         }
     }
 }
+
+
+
