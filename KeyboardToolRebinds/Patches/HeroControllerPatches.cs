@@ -16,15 +16,59 @@ namespace KeyboardToolRebinds
         [HarmonyPostfix]
         private static void LookForInput_Postfix(HeroController __instance)
         {
-            // Check for our custom keys
-            if (Input.GetKeyDown(Plugin.ToolUpKey.Value))
+            if (Plugin.EnableHoldMode.Value)
             {
-                TryUseToolDirectly(__instance, AttackToolBinding.Up);
+                // Hold mode: simulate holding the input
+                if (Input.GetKey(Plugin.ToolUpKey.Value))
+                {
+                    SimulateHoldingInput(__instance, AttackToolBinding.Up);
+                }
+                if (Input.GetKey(Plugin.ToolDownKey.Value))
+                {
+                    SimulateHoldingInput(__instance, AttackToolBinding.Down);
+                }
             }
-
-            if (Input.GetKeyDown(Plugin.ToolDownKey.Value))
+            else
             {
-                TryUseToolDirectly(__instance, AttackToolBinding.Down);
+                // Single press mode only
+                if (Input.GetKeyDown(Plugin.ToolUpKey.Value))
+                {
+                    TryUseToolDirectly(__instance, AttackToolBinding.Up);
+                }
+                if (Input.GetKeyDown(Plugin.ToolDownKey.Value))
+                {
+                    TryUseToolDirectly(__instance, AttackToolBinding.Down);
+                }
+            }
+        }
+
+        private static void SimulateHoldingInput(HeroController heroController, AttackToolBinding binding)
+        {
+            try
+            {
+                // Get the tool for this binding without actually using it
+                AttackToolBinding usedBinding;
+                var tool = ToolItemManager.GetBoundAttackTool(binding, ToolEquippedReadSource.Active, out usedBinding);
+
+                if (tool == null) return;
+
+                // Set willThrowTool field so the game thinks a tool is selected
+                if (willThrowToolField == null)
+                {
+                    willThrowToolField = typeof(HeroController).GetField("willThrowTool", 
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+
+                if (willThrowToolField == null) return;
+
+                willThrowToolField.SetValue(heroController, tool);
+
+                // Let the game's normal input system handle the holding behavior
+                // We just need to ensure the tool is selected while the key is held
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"Error simulating hold input: {ex.Message}");
             }
         }
 
