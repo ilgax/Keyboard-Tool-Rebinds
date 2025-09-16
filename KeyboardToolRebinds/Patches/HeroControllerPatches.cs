@@ -16,59 +16,15 @@ namespace KeyboardToolRebinds
         [HarmonyPostfix]
         private static void LookForInput_Postfix(HeroController __instance)
         {
-            if (Plugin.EnableHoldMode.Value)
+            // Check for our custom keys
+            if (Input.GetKeyDown(Plugin.ToolUpKey.Value))
             {
-                // Hold mode: simulate holding the input
-                if (Input.GetKey(Plugin.ToolUpKey.Value))
-                {
-                    SimulateHoldingInput(__instance, AttackToolBinding.Up);
-                }
-                if (Input.GetKey(Plugin.ToolDownKey.Value))
-                {
-                    SimulateHoldingInput(__instance, AttackToolBinding.Down);
-                }
+                TryUseToolDirectly(__instance, AttackToolBinding.Up);
             }
-            else
+
+            if (Input.GetKeyDown(Plugin.ToolDownKey.Value))
             {
-                // Single press mode only
-                if (Input.GetKeyDown(Plugin.ToolUpKey.Value))
-                {
-                    TryUseToolDirectly(__instance, AttackToolBinding.Up);
-                }
-                if (Input.GetKeyDown(Plugin.ToolDownKey.Value))
-                {
-                    TryUseToolDirectly(__instance, AttackToolBinding.Down);
-                }
-            }
-        }
-
-        private static void SimulateHoldingInput(HeroController heroController, AttackToolBinding binding)
-        {
-            try
-            {
-                // Get the tool for this binding without actually using it
-                AttackToolBinding usedBinding;
-                var tool = ToolItemManager.GetBoundAttackTool(binding, ToolEquippedReadSource.Active, out usedBinding);
-
-                if (tool == null) return;
-
-                // Set willThrowTool field so the game thinks a tool is selected
-                if (willThrowToolField == null)
-                {
-                    willThrowToolField = typeof(HeroController).GetField("willThrowTool", 
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-                }
-
-                if (willThrowToolField == null) return;
-
-                willThrowToolField.SetValue(heroController, tool);
-
-                // Let the game's normal input system handle the holding behavior
-                // We just need to ensure the tool is selected while the key is held
-            }
-            catch (System.Exception ex)
-            {
-                Plugin.Log.LogError($"Error simulating hold input: {ex.Message}");
+                TryUseToolDirectly(__instance, AttackToolBinding.Down);
             }
         }
 
@@ -116,11 +72,45 @@ namespace KeyboardToolRebinds
                                 bool upPressed = heroActions.Up.IsPressed;
                                 bool downPressed = heroActions.Down.IsPressed;
 
-                                // Only block if directional input is being used
+                                // If directional input is being used, redirect to neutral cast
                                 if (upPressed || downPressed)
                                 {
+                                    // Instead of blocking, use neutral cast as fallback
+                                    AttackToolBinding usedBinding;
+                                    var neutralTool = ToolItemManager.GetBoundAttackTool(AttackToolBinding.Neutral, ToolEquippedReadSource.Active, out usedBinding);
+
+                                    if (neutralTool != null)
+                                    {
+                                        // Set willThrowTool to neutral tool
+                                        if (willThrowToolField == null)
+                                        {
+                                            willThrowToolField = typeof(HeroController).GetField("willThrowTool", 
+                                                BindingFlags.NonPublic | BindingFlags.Instance);
+                                        }
+
+                                        if (willThrowToolField != null)
+                                        {
+                                            willThrowToolField.SetValue(__instance, neutralTool);
+
+                                            // Check if we can use this neutral tool
+                                            if (canThrowToolMethod == null)
+                                            {
+                                                canThrowToolMethod = typeof(HeroController).GetMethod("CanThrowTool", 
+                                                    BindingFlags.NonPublic | BindingFlags.Instance);
+                                            }
+
+                                            if (canThrowToolMethod != null)
+                                            {
+                                                bool canThrow = (bool)canThrowToolMethod.Invoke(__instance, new object[] { neutralTool, usedBinding, true });
+                                                __result = canThrow;
+                                                return false; // Skip original method, use our result
+                                            }
+                                        }
+                                    }
+
+                                    // If neutral tool setup failed, just block
                                     __result = false;
-                                    return false; // Block directional tool input
+                                    return false;
                                 }
                             }
                         }
