@@ -34,6 +34,6 @@
     <!-- Copy the built plugin into the local game after building (skipped in CI or if the game isn't found). -->
     <Target Name="CopyToGame" AfterTargets="Build"
             Condition="'$(CI)' != 'true' And Exists('$(SilksongDir)\BepInEx\plugins')">
-        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SilksongDir)\BepInEx\plugins" ContinueOnError="WarnAndContinue" />
+        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SilksongDir)\BepInEx\plugins\KeyboardToolRebinds" ContinueOnError="WarnAndContinue" />
     </Target>
 </Project>
