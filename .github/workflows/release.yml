@@ -56,7 +56,7 @@ jobs:
           dll=KeyboardToolRebinds/bin/Release/KeyboardToolRebinds.dll
           # Manual install / Nexus Mods: extracts into the game folder.
           mkdir -p dist/stage/BepInEx/plugins/KeyboardToolRebinds
-          cp "$dll" dist/stage/BepInEx/plugins/KeyboardToolRebinds/
+          cp "$dll" LICENSE dist/stage/BepInEx/plugins/KeyboardToolRebinds/
           (cd dist/stage && zip -r "../KeyboardToolRebinds-$VERSION.zip" BepInEx)
           # Thunderstore package (mod managers).
           mkdir -p thunderstore/temp

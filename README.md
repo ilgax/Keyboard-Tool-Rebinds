@@ -36,3 +36,8 @@ BepInEx ConfigurationManager (opened with F1) if you have it installed. Changes 
 The mod listens for keyboard keys. To use it on a controller, map spare buttons to your tool keys
 with Steam Input or JoyToKey.
 
+## License
+
+Keyboard Tool Rebinds is free software: you can redistribute it and/or modify it under the terms of the
+[GNU General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License,
+or (at your option) any later version.

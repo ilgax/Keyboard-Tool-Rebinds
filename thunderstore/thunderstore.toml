@@ -25,6 +25,10 @@ outdir = "./dist"
 source = "./temp"
 target = "/"
 
+[[build.copy]]
+source = "../LICENSE"
+target = "/"
+
 [publish]
 repository = "https://thunderstore.io"
 communities = ["hollow-knight-silksong"]

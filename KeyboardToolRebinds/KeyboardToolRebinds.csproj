@@ -7,6 +7,7 @@
         <BepInExPluginGuid>com.ilgax.keyboardtoolrebinds</BepInExPluginGuid>
         <!-- Single source of truth for the mod version (plugin, Thunderstore, Nexus, git tag). -->
         <Version>2.2.0</Version>
+        <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
         <LangVersion>latest</LangVersion>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
         <!-- Ignore processor architecture mismatch warnings from game assemblies. -->

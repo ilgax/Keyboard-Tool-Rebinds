@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
