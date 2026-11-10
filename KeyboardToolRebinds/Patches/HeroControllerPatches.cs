@@ -1,183 +1,181 @@
 using HarmonyLib;
+using InControl;
 using UnityEngine;
-using System.Reflection;
 
 namespace KeyboardToolRebinds
 {
-    // Patch HeroController to directly handle our custom keys
-    [HarmonyPatch(typeof(HeroController))]
-    public class HeroController_DirectPatches
+    /// <summary>
+    /// Tracks which custom tool key (if any) is currently driving the Quick Cast action.
+    /// </summary>
+    internal static class ToolKeyState
     {
-        private static FieldInfo willThrowToolField;
-        private static MethodInfo canThrowToolMethod;
-        private static MethodInfo throwToolMethod;
+        // Binding currently driving Quick Cast; null when no custom key is active.
+        public static AttackToolBinding? ActiveBinding;
 
+        // A key only counts once it was pressed while the player could act.
+        // Presses made in menus, dialogs, shops or the pause screen are ignored entirely,
+        // so they never queue up tools or leak through when the menu closes.
+        private static bool upArmed;
+        private static bool downArmed;
+
+        private static int lastUpdatedFrame = -1;
+
+        public static void Refresh()
+        {
+            // Input can be polled more than once per frame; only sample once.
+            if (lastUpdatedFrame == Time.frameCount) return;
+            lastUpdatedFrame = Time.frameCount;
+
+            if (!Plugin.ModEnabled.Value)
+            {
+                upArmed = downArmed = false;
+                ActiveBinding = null;
+                return;
+            }
+
+            KeyConflictChecker.CheckIfNeeded();
+
+            KeyCode upKey = Plugin.ToolUpKey.Value;
+            KeyCode downKey = Plugin.ToolDownKey.Value;
+            bool canStart = CanStartToolInput();
+
+            // Arm on a fresh press during gameplay; disarm as soon as the key is let go.
+            // An armed key stays armed while held even if the hero loses control
+            // (held tools take control of the hero themselves).
+            if (Input.GetKeyDown(upKey) && canStart) upArmed = true;
+            if (Input.GetKeyDown(downKey) && canStart) downArmed = true;
+            if (!Input.GetKey(upKey)) upArmed = false;
+            if (!Input.GetKey(downKey)) downArmed = false;
+
+            // Mirror vanilla direction handling: Quick Cast stays held while either key is held,
+            // and the slot follows the keys exactly like holding Up/Down does (Up wins over Down).
+            // Pressing the other key mid-hold therefore behaves like changing direction mid-hold.
+            ActiveBinding = upArmed ? AttackToolBinding.Up
+                : downArmed ? AttackToolBinding.Down
+                : (AttackToolBinding?)null;
+        }
+
+        internal static bool CanStartToolInput()
+        {
+            HeroController hero = HeroController.SilentInstance;
+            if (hero == null) return false;
+
+            InputHandler input = ManagerSingleton<InputHandler>.Instance;
+            if (input == null || !input.acceptingInput) return false;
+
+            // CanInput covers pause, inventory, scene transitions, respawns and hazard deaths.
+            // controlReqlinquished / IsInputBlocked cover NPC dialogs, shops and pop-up menus.
+            return hero.CanInput() && !hero.controlReqlinquished && !hero.IsInputBlocked();
+        }
+    }
+
+    /// <summary>
+    /// Feeds the custom keys into the game's Quick Cast action, so every system that reads
+    /// QuickCast (hero tool throw, held tool FSMs, held silk skills) sees a real press/hold/release.
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerAction), "UpdateBindings")]
+    internal static class PlayerAction_UpdateBindings_Patch
+    {
+        private static void Prefix(PlayerAction __instance, ulong updateTick, float deltaTime)
+        {
+            if (!(__instance.Owner is HeroActions heroActions) || !ReferenceEquals(__instance, heroActions.QuickCast))
+                return;
+
+            ToolKeyState.Refresh();
+
+            if (ToolKeyState.ActiveBinding.HasValue)
+                __instance.UpdateWithState(true, updateTick, deltaTime);
+        }
+    }
+
+    [HarmonyPatch(typeof(HeroController))]
+    internal static class HeroController_Patches
+    {
+        private static readonly AccessTools.FieldRef<HeroController, InputHandler> InputHandlerRef =
+            AccessTools.FieldRefAccess<HeroController, InputHandler>("inputHandler");
+
+        /// <summary>
+        /// Chooses which tool Quick Cast will use. Called on press and every frame while a
+        /// held tool is active, so the choice must stay stable for the whole hold.
+        /// </summary>
+        [HarmonyPatch(nameof(HeroController.GetWillThrowTool))]
+        [HarmonyPrefix]
+        private static bool GetWillThrowTool_Prefix(HeroController __instance, bool reportFailure,
+            ref ToolItem ___willThrowTool, ref bool __result)
+        {
+            if (!Plugin.ModEnabled.Value) return true; // Mod turned off: pure vanilla.
+
+            AttackToolBinding binding;
+
+            if (ToolKeyState.ActiveBinding.HasValue)
+            {
+                binding = ToolKeyState.ActiveBinding.Value;
+            }
+            else if (Plugin.BlockOriginalInput.Value && IsDirectionHeld(__instance))
+            {
+                // Vanilla Up/Down + Cast is disabled: always use the neutral tool.
+                binding = AttackToolBinding.Neutral;
+            }
+            else
+            {
+                return true; // Vanilla behaviour.
+            }
+
+            ___willThrowTool = ToolItemManager.GetBoundAttackTool(binding, ToolEquippedReadSource.Active, out AttackToolBinding usedBinding);
+            __result = ___willThrowTool != null && CanThrowTool(__instance, ___willThrowTool, usedBinding, reportFailure);
+            return false;
+        }
+
+        [HarmonyReversePatch]
+        [HarmonyPatch("CanThrowTool", typeof(ToolItem), typeof(AttackToolBinding), typeof(bool))]
+        private static bool CanThrowTool(HeroController instance, ToolItem tool, AttackToolBinding binding, bool reportFailure)
+        {
+            throw new System.NotImplementedException("Stub replaced by Harmony reverse patch");
+        }
+
+        [HarmonyReversePatch]
+        [HarmonyPatch("ThrowTool", typeof(bool))]
+        private static void ThrowTool(HeroController instance, bool isAutoThrow)
+        {
+            throw new System.NotImplementedException("Stub replaced by Harmony reverse patch");
+        }
+
+        /// <summary>
+        /// Optional hold-to-repeat: while a custom key stays held, keep using the bound attack
+        /// tool whenever the game would accept a fresh Quick Cast press. Every vanilla check
+        /// (cooldown, attack recovery, ammo, control state) still applies.
+        /// </summary>
         [HarmonyPatch("LookForInput")]
         [HarmonyPostfix]
-        private static void LookForInput_Postfix(HeroController __instance)
+        private static void LookForInput_Postfix(HeroController __instance, ref ToolItem ___willThrowTool)
         {
-            // Check for our custom keys
-            if (Input.GetKeyDown(Plugin.ToolUpKey.Value))
-            {
-                TryUseToolDirectly(__instance, AttackToolBinding.Up);
-            }
+            if (!Plugin.HoldToRepeat.Value || !ToolKeyState.ActiveBinding.HasValue) return;
 
-            if (Input.GetKeyDown(Plugin.ToolDownKey.Value))
-            {
-                TryUseToolDirectly(__instance, AttackToolBinding.Down);
-            }
+            InputHandler handler = InputHandlerRef(__instance);
+            if (handler == null || handler.inputActions == null) return;
+
+            // The first press is handled by vanilla; only repeat on later frames of the hold.
+            PlayerAction quickCast = handler.inputActions.QuickCast;
+            if (!quickCast.IsPressed || quickCast.WasPressed) return;
+
+            // Let the current throw animation finish so repeats are paced like normal tapping.
+            if (__instance.cState.isToolThrowing) return;
+            if (!ToolKeyState.CanStartToolInput()) return;
+
+            // CanThrowTool(false) = cooldown ready + can attack; GetWillThrowTool(false) checks ammo/silk silently.
+            if (!__instance.CanThrowTool(false) || !__instance.GetWillThrowTool(false)) return;
+
+            // Only repeat attack (red) tools; silk skills keep their one-press behaviour.
+            if (___willThrowTool == null || ___willThrowTool.Type != ToolItemType.Red) return;
+
+            ThrowTool(__instance, false);
         }
 
-        // Block the original GetWillThrowTool method only for directional inputs
-        [HarmonyPatch("GetWillThrowTool")]
-        [HarmonyPrefix]
-        private static bool GetWillThrowTool_Prefix(HeroController __instance, ref bool __result)
+        private static bool IsDirectionHeld(HeroController hero)
         {
-            // Only block if the setting is enabled
-            if (Plugin.BlockOriginalInput.Value)
-            {
-                try
-                {
-                    // Get the inputHandler field
-                    var inputHandlerField = typeof(HeroController).GetField("inputHandler", 
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-
-                    if (inputHandlerField != null)
-                    {
-                        var inputHandler = inputHandlerField.GetValue(__instance);
-
-                        // Try property first, then field
-                        System.Reflection.MemberInfo inputActionsMember = inputHandler.GetType().GetProperty("inputActions");
-                        if (inputActionsMember == null)
-                        {
-                            inputActionsMember = inputHandler.GetType().GetField("inputActions");
-                        }
-
-                        if (inputActionsMember != null)
-                        {
-                            object inputActions = null;
-
-                            if (inputActionsMember is System.Reflection.PropertyInfo prop)
-                            {
-                                inputActions = prop.GetValue(inputHandler);
-                            }
-                            else if (inputActionsMember is System.Reflection.FieldInfo field)
-                            {
-                                inputActions = field.GetValue(inputHandler);
-                            }
-
-                            if (inputActions is HeroActions heroActions)
-                            {
-                                // Check if Up or Down is pressed
-                                bool upPressed = heroActions.Up.IsPressed;
-                                bool downPressed = heroActions.Down.IsPressed;
-
-                                // If directional input is being used, redirect to neutral cast
-                                if (upPressed || downPressed)
-                                {
-                                    // Instead of blocking, use neutral cast as fallback
-                                    AttackToolBinding usedBinding;
-                                    var neutralTool = ToolItemManager.GetBoundAttackTool(AttackToolBinding.Neutral, ToolEquippedReadSource.Active, out usedBinding);
-
-                                    if (neutralTool != null)
-                                    {
-                                        // Set willThrowTool to neutral tool
-                                        if (willThrowToolField == null)
-                                        {
-                                            willThrowToolField = typeof(HeroController).GetField("willThrowTool", 
-                                                BindingFlags.NonPublic | BindingFlags.Instance);
-                                        }
-
-                                        if (willThrowToolField != null)
-                                        {
-                                            willThrowToolField.SetValue(__instance, neutralTool);
-
-                                            // Check if we can use this neutral tool
-                                            if (canThrowToolMethod == null)
-                                            {
-                                                canThrowToolMethod = typeof(HeroController).GetMethod("CanThrowTool", 
-                                                    BindingFlags.NonPublic | BindingFlags.Instance);
-                                            }
-
-                                            if (canThrowToolMethod != null)
-                                            {
-                                                bool canThrow = (bool)canThrowToolMethod.Invoke(__instance, new object[] { neutralTool, usedBinding, true });
-                                                __result = canThrow;
-                                                return false; // Skip original method, use our result
-                                            }
-                                        }
-                                    }
-
-                                    // If neutral tool setup failed, just block
-                                    __result = false;
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (System.Exception)
-                {
-                    // If reflection fails, don't block anything
-                }
-            }
-
-            // Allow original method to run (for neutral cast or if blocking is disabled)
-            return true;
-        }
-
-        private static void TryUseToolDirectly(HeroController heroController, AttackToolBinding binding)
-        {
-            try
-            {
-                // Get the tool for this binding
-                AttackToolBinding usedBinding;
-                var tool = ToolItemManager.GetBoundAttackTool(binding, ToolEquippedReadSource.Active, out usedBinding);
-
-                if (tool == null) return; // No tool available
-
-                // Set willThrowTool field using reflection
-                if (willThrowToolField == null)
-                {
-                    willThrowToolField = typeof(HeroController).GetField("willThrowTool", 
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-                }
-
-                if (willThrowToolField == null) return; // Field not found
-
-                willThrowToolField.SetValue(heroController, tool);
-
-                // Get private method references
-                if (canThrowToolMethod == null)
-                {
-                    canThrowToolMethod = typeof(HeroController).GetMethod("CanThrowTool", 
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-                }
-
-                if (throwToolMethod == null)
-                {
-                    throwToolMethod = typeof(HeroController).GetMethod("ThrowTool", 
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-                }
-
-                if (canThrowToolMethod == null || throwToolMethod == null) return; // Methods not found
-
-                // Check if we can throw this tool and do it
-                bool canThrow = (bool)canThrowToolMethod.Invoke(heroController, new object[] { tool, usedBinding, true });
-
-                if (canThrow)
-                {
-                    throwToolMethod.Invoke(heroController, new object[] { false }); // Use the tool
-                }
-            }
-            catch (System.Exception ex)
-            {
-                // Only log actual errors
-                Plugin.Log.LogError($"Error using tool: {ex.Message}");
-            }
+            InputHandler handler = InputHandlerRef(hero);
+            if (handler == null || handler.inputActions == null) return false;
+            return handler.inputActions.Up.IsPressed || handler.inputActions.Down.IsPressed;
         }
     }
 }
-
-
-
