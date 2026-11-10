@@ -1,0 +1,10 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+decompiled/
+.idea/
+thunderstore/temp/
+thunderstore/dist/
+dist/
