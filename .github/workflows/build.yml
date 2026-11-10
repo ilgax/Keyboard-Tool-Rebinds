@@ -1,0 +1,22 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]   # not tags: release.yml builds those itself
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build KeyboardToolRebinds/KeyboardToolRebinds.csproj -c Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KeyboardToolRebinds
+          path: KeyboardToolRebinds/bin/Release/KeyboardToolRebinds.dll

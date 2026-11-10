@@ -1,0 +1,92 @@
+name: release
+
+# Push a tag like v1.1.0 to build the mod and publish a GitHub release with the zips. Versions below 1.0 or with a
+# suffix (1.2.0-beta) are published as pre-releases, with GitHub's generated notes. The tag must match <Version> in
+# KeyboardToolRebinds/KeyboardToolRebinds.csproj.
+#
+# It also publishes to Thunderstore when the repository has a THUNDERSTORE_TOKEN secret (a service account token of
+# the Thunderstore team named in thunderstore/thunderstore.toml), and to Nexus Mods when it has a NEXUSMODS_API_KEY
+# secret and a NEXUS_FILE_ID variable (the file to add a new version to; set NEXUS_MOD_ID too for a changelog).
+# To keep one release off both, put [skip] in its tag's message, or [skip thunderstore] / [skip nexus] for one:
+#   git tag -a v1.1.1 -m "[skip]" && git push origin v1.1.1
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+# Also here, so the publish steps can check whether the secrets exist.
+env:
+  PROJECT: KeyboardToolRebinds/KeyboardToolRebinds.csproj
+  THUNDERSTORE_TOKEN: ${{ secrets.THUNDERSTORE_TOKEN }}
+  NEXUSMODS_API_KEY: ${{ secrets.NEXUSMODS_API_KEY }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Check the tag matches the version
+        run: |
+          version=$(dotnet msbuild "$PROJECT" -getProperty:Version)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match <Version>$version</Version>" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          message=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+          if grep -qiF '[skip]' <<< "$message" || grep -qiF '[skip thunderstore]' <<< "$message"; then
+            echo "SKIP_THUNDERSTORE=true" >> "$GITHUB_ENV"
+          fi
+          if grep -qiF '[skip]' <<< "$message" || grep -qiF '[skip nexus]' <<< "$message"; then
+            echo "SKIP_NEXUS=true" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        run: dotnet build "$PROJECT" -c Release
+      - name: Package
+        run: |
+          dll=KeyboardToolRebinds/bin/Release/KeyboardToolRebinds.dll
+          # Manual install / Nexus Mods: extracts into the game folder.
+          mkdir -p dist/stage/BepInEx/plugins/KeyboardToolRebinds
+          cp "$dll" dist/stage/BepInEx/plugins/KeyboardToolRebinds/
+          (cd dist/stage && zip -r "../KeyboardToolRebinds-$VERSION.zip" BepInEx)
+          # Thunderstore package (mod managers).
+          mkdir -p thunderstore/temp
+          cp "$dll" thunderstore/temp/
+          dotnet tool restore
+          dotnet tcli build --config-path thunderstore/thunderstore.toml --package-version "$VERSION"
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$VERSION" in 0.*|*-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" $prerelease --title "Keyboard Tool Rebinds $VERSION" --generate-notes \
+            "dist/KeyboardToolRebinds-$VERSION.zip" thunderstore/dist/*.zip
+      - name: Upload to Thunderstore
+        if: ${{ env.THUNDERSTORE_TOKEN != '' && env.SKIP_THUNDERSTORE != 'true' }}
+        run: |
+          dotnet tcli publish --config-path thunderstore/thunderstore.toml \
+            --file thunderstore/dist/*.zip --token "$THUNDERSTORE_TOKEN"
+      - name: Upload to Nexus Mods
+        if: ${{ env.NEXUSMODS_API_KEY != '' && vars.NEXUS_FILE_ID != '' && env.SKIP_NEXUS != 'true' }}
+        uses: Nexus-Mods/upload-action@98532f7670c27cbecc78fae03fa3e278147827e2 # v1.0.0-beta.11
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          file_id: ${{ vars.NEXUS_FILE_ID }}
+          filename: dist/KeyboardToolRebinds-${{ env.VERSION }}.zip
+          version: ${{ env.VERSION }}
+          display_name: Keyboard Tool Rebinds ${{ env.VERSION }}
+          description: Extract into your Silksong folder (requires BepInEx).
+          archive_existing_version: true
+          update_mod_version: true
+          mod_id: ${{ vars.NEXUS_MOD_ID }}
+          changelog: "${{ vars.NEXUS_MOD_ID != '' && format('Changes: https://github.com/{0}/releases/tag/{1}', github.repository, github.ref_name) || '' }}"

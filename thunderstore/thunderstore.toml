@@ -1,0 +1,33 @@
+[config]
+schemaVersion = "0.0.1"
+
+[package]
+# Must match your Thunderstore team name exactly.
+namespace = "ilgax"
+name = "KeyboardToolRebinds"
+# Overridden by CI with the version from KeyboardToolRebinds.csproj.
+versionNumber = "2.2.0"
+# Max 250 characters.
+description = "Use your Up and Down tools with their own keys instead of holding a direction. Supports held tools, optional hold-to-repeat, and ignores presses in menus."
+websiteUrl = "https://github.com/ilgax/Keyboard-Tool-Rebinds"
+containsNsfwContent = false
+
+[package.dependencies]
+silksong_modding-BepInExPack_Silksong = "1.0.3"
+
+[build]
+icon = "./icon.png"
+readme = "../README.md"
+outdir = "./dist"
+
+# CI stages the built DLL into ./temp before running `tcli build`.
+[[build.copy]]
+source = "./temp"
+target = "/"
+
+[publish]
+repository = "https://thunderstore.io"
+communities = ["hollow-knight-silksong"]
+
+[publish.categories]
+hollow-knight-silksong = ["mods"]
